@@ -1,0 +1,5 @@
+Model,R2 Score,Adj R2,MAE (Log),MAE (Price),Best Params,Duration (s)
+Tuned Random Forest,0.9003908378531693,0.8771809359937136,0.14404077113911706,8953.462199633268,"{'n_estimators': 500, 'min_samples_split': 2, 'max_features': 'log2', 'max_depth': 20}",15.683672904968262
+Tuned SVR,0.8828080020214578,0.8555011287060693,0.15452784382169593,9712.873438856774,"{'gamma': 'scale', 'epsilon': 0.01, 'C': 1}",0.9650731086730957
+Tuned Gradient Boosting,0.9160485020679422,0.896486987986686,0.13104819737870388,8368.251340332781,"{'subsample': 0.7, 'n_estimators': 200, 'max_depth': 5, 'learning_rate': 0.05}",6.71638298034668
+Tuned XGBoost,0.9014700683151848,0.8785116376313444,0.1437288771959978,8942.777796348038,"{'subsample': 0.6, 'n_estimators': 300, 'max_depth': 7, 'learning_rate': 0.1, 'gamma': 0.1, 'colsample_bytree': 0.8}",2.3379619121551514
