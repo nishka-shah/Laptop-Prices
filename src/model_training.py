@@ -76,7 +76,7 @@ def main():
     X_train, X_test, y_train, y_test, scaler = prepare_datasets(df_features)
 
     # Baseline Training (Matches Notebook Section 2)
-    print("\n--- Phase 1: Baseline Comparison ---")
+    print("\n Phase 1: Baseline Comparison")
     baseline_models = {
         "Linear Regression": LinearRegression(),
         "Ridge": Ridge(alpha=1.0),
@@ -104,10 +104,10 @@ def main():
     print(baseline_df[["Model", "R2 Score", "MAE (Price)"]])
 
     # Hyperparameter Tuning & Tuned Ensemble (Matches Notebook Sections 5 & 5b)
-    print("\n--- Phase 2: Hyperparameter Tuning Finalists ---")
+    print("\n Phase 2: Hyperparameter Tuning Finalists")
     best_models, final_df = tune_models(X_train, y_train, X_test, y_test)
     
-    print("\n--- Phase 3: Final Tuned Leaderboard ---")
+    print("\n Phase 3: Final Tuned Leaderboard")
     final_df = final_df.sort_values(by="R2 Score", ascending=False)
     print(final_df[["Model", "R2 Score", "MAE (Price)"]])
     

@@ -75,7 +75,7 @@ def tune_models(X_train, y_train, X_test, y_test):
         search = RandomizedSearchCV(
             estimator=estimator,
             param_distributions=param_dist,
-            n_iter=20, # Matches notebook search intensity
+            n_iter=20, 
             cv=5,
             verbose=0,
             random_state=42,
@@ -110,7 +110,6 @@ def tune_models(X_train, y_train, X_test, y_test):
         estimators=[
             ('xgb', best_models["XGBoost"]),
             ('cat', best_models["CatBoost"]),
-            ('rf', best_models["Random Forest"]),
             ('et', best_models["Extra Trees"]),
             ('svr', best_models["SVR"])
         ],
