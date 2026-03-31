@@ -11,50 +11,59 @@ if PROJ_ROOT not in sys.path:
     sys.path.append(PROJ_ROOT)
 
 from src.feature_engineering import load_data, run_feature_engineering_pipeline, prepare_datasets
-from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor
-from xgboost import XGBRegressor
-from sklearn.svm import SVR
 from sklearn.model_selection import RandomizedSearchCV
-from sklearn.metrics import mean_absolute_error, r2_score
+from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor, ExtraTreesRegressor, StackingRegressor
+from xgboost import XGBRegressor
+from catboost import CatBoostRegressor
+from sklearn.svm import SVR
+from sklearn.linear_model import RidgeCV
+from sklearn.metrics import r2_score, mean_absolute_error
 
 def tune_models(X_train, y_train, X_test, y_test):
-    """Tune the top 3 models and return the results and best overall model."""
+    """Tune the top models and return the best estimators."""
     
-    # grids for models
+    # Parameter Grids
     rf_grid = {
-        'n_estimators': [100, 200, 300, 500],
-        'max_depth': [10, 20, 40, None],
-        'min_samples_split': [2, 5, 10],
+        'n_estimators': [100, 300, 500], 
+        'max_depth': [10, 20, None], 
         'max_features': ['sqrt', 'log2', None]
     }
-
-    svr_grid = {
-        'C': [0.1, 1, 10, 100],
-        'epsilon': [0.01, 0.1, 0.2, 0.5],
-        'gamma': ['scale', 'auto', 0.1, 0.01]
-    }
-
     gb_grid = {
-        'n_estimators': [100, 200, 300],
-        'learning_rate': [0.01, 0.05, 0.1, 0.2],
+        'n_estimators': [100, 300, 500], 
+        'learning_rate': [0.01, 0.05, 0.1], 
         'max_depth': [3, 4, 5, 6],
-        'subsample': [0.7, 0.8, 0.9, 1.0]
+        'subsample': [0.8, 0.9, 1.0]
     }
-
     xgb_grid = {
-        'n_estimators': [100, 200, 300, 500],
-        'learning_rate': [0.01, 0.05, 0.1, 0.2, 0.3],
-        'max_depth': [3, 4, 5, 6, 7, 8],
-        'subsample': [0.6, 0.8, 1.0],
-        'colsample_bytree': [0.6, 0.8, 1.0],
-        'gamma': [0, 0.1, 0.2]
+        'n_estimators': [100, 300, 500, 1000], 
+        'learning_rate': [0.01, 0.05, 0.1], 
+        'max_depth': [4, 6, 8, 10], 
+        'subsample': [0.7, 0.8, 1.0]
+    }
+    cat_grid = {
+        'iterations': [100, 500, 1000], 
+        'learning_rate': [0.01, 0.05, 0.1], 
+        'depth': [4, 6, 8, 10], 
+        'l2_leaf_reg': [1, 3, 5, 7]
+    }
+    et_grid = {
+        'n_estimators': [100, 300, 500], 
+        'max_depth': [10, 20, None], 
+        'min_samples_split': [2, 5, 10]
+    }
+    svr_grid = {
+        'C': [0.1, 1, 10, 100, 500], 
+        'epsilon': [0.01, 0.1, 0.2], 
+        'gamma': ['scale', 'auto', 0.1, 0.01]
     }
 
     models_to_tune = [
         (RandomForestRegressor(random_state=42), rf_grid, "Random Forest"),
-        (SVR(kernel='rbf'), svr_grid, "SVR"),
         (GradientBoostingRegressor(random_state=42), gb_grid, "Gradient Boosting"),
-        (XGBRegressor(random_state=42), xgb_grid, "XGBoost")
+        (XGBRegressor(random_state=42), xgb_grid, "XGBoost"),
+        (CatBoostRegressor(verbose=0, random_state=42), cat_grid, "CatBoost"),
+        (ExtraTreesRegressor(random_state=42), et_grid, "Extra Trees"),
+        (SVR(kernel='rbf'), svr_grid, "SVR")
     ]
 
     best_models = {}
@@ -66,7 +75,7 @@ def tune_models(X_train, y_train, X_test, y_test):
         search = RandomizedSearchCV(
             estimator=estimator,
             param_distributions=param_dist,
-            n_iter=15,
+            n_iter=20, # Matches notebook search intensity
             cv=5,
             verbose=0,
             random_state=42,
@@ -79,27 +88,57 @@ def tune_models(X_train, y_train, X_test, y_test):
         best_model = search.best_estimator_
         y_pred = best_model.predict(X_test)
         
-        # Consistent Metrics calculation
         r2 = r2_score(y_test, y_pred)
         n, p = X_test.shape
         adj_r2 = 1 - (1 - r2) * (n - 1) / (n - p - 1)
-        mae_log = mean_absolute_error(y_test, y_pred)
-        
-        y_test_exp = np.exp(y_test)
-        y_pred_exp = np.exp(y_pred)
-        mae_price = mean_absolute_error(y_test_exp, y_pred_exp)
+        mae_price = mean_absolute_error(np.exp(y_test), np.exp(y_pred))
         
         best_models[name] = best_model
         results.append({
             "Model": f"Tuned {name}",
             "R2 Score": r2,
             "Adj R2": adj_r2,
-            "MAE (Log)": mae_log,
             "MAE (Price)": mae_price,
             "Best Params": str(search.best_params_),
             "Duration (s)": duration
         })
         print(f"Done in {duration:.2f}s. R2: {r2:.4f}")
+
+    # Build Final Stacked Generalizer (Ensemble)
+    print("\nBuilding Final Tuned Stacked Generalizer...")
+    final_tuned_stack = StackingRegressor(
+        estimators=[
+            ('xgb', best_models["XGBoost"]),
+            ('cat', best_models["CatBoost"]),
+            ('rf', best_models["Random Forest"]),
+            ('et', best_models["Extra Trees"]),
+            ('svr', best_models["SVR"])
+        ],
+        final_estimator=RidgeCV(),
+        cv=5,
+        n_jobs=-1
+    )
+    
+    start_stack = time()
+    final_tuned_stack.fit(X_train, y_train)
+    stack_duration = time() - start_stack
+    
+    y_pred_stack = final_tuned_stack.predict(X_test)
+    r2_stack = r2_score(y_test, y_pred_stack)
+    n, p = X_test.shape
+    adj_r2_stack = 1 - (1 - r2_stack) * (n - 1) / (n - p - 1)
+    mae_price_stack = mean_absolute_error(np.exp(y_test), np.exp(y_pred_stack))
+    
+    best_models["Stacked Ensemble"] = final_tuned_stack
+    results.append({
+        "Model": "Tuned Stacked Generalizer (Ensemble)",
+        "R2 Score": r2_stack,
+        "Adj R2": adj_r2_stack,
+        "MAE (Price)": mae_price_stack,
+        "Best Params": "Ensemble of tuned models",
+        "Duration (s)": stack_duration
+    })
+    print(f"Ensemble trained in {stack_duration:.2f}s. R2: {r2_stack:.4f}")
 
     return best_models, pd.DataFrame(results)
 
@@ -129,7 +168,7 @@ def main():
 
     best_models, results_df = tune_models(X_train, y_train, X_test, y_test)
 
-    print("\n--- Final Tuning Results ---")
+    print("\n--- Final Leaderboard ---")
     results_ordered = results_df.sort_values("R2 Score", ascending=False)
     print(results_ordered[["Model", "R2 Score", "MAE (Price)"]])
 
@@ -137,33 +176,29 @@ def main():
     os.makedirs(results_dir, exist_ok=True)
     results_df.to_csv(os.path.join(results_dir, "tuned_model_performance.csv"), index=False)
 
-    # Save the best overall tuned model
-    best_row = results_df.loc[results_df['R2 Score'].idxmax()]
-    best_name = best_row['Model'].replace("Tuned ", "")
-    best_model = best_models[best_name]
+    # Identify and save the winner
+    best_row = results_ordered.iloc[0]
+    best_overall_name = best_row['Model']
+    
+    # Map friendly name back to best_models key
+    model_key = None
+    if "Ensemble" in best_overall_name: model_key = "Stacked Ensemble"
+    else: model_key = best_overall_name.replace("Tuned ", "")
+    
+    best_model = best_models[model_key]
     
     os.makedirs(model_dir, exist_ok=True)
     model_save_path = os.path.join(model_dir, "best_laptop_price_model_final.joblib")
     joblib.dump(best_model, model_save_path)
     
-    # Save feature columns to ensure consistency during inference
-    feature_cols_path = os.path.join(model_dir, "feature_columns.joblib")
-    joblib.dump(X_train.columns.tolist(), feature_cols_path)
-    
-    # Save the scaler
-    scaler_path = os.path.join(model_dir, "scaler.joblib")
-    joblib.dump(scaler, scaler_path)
-    print(f"Scaler saved to {scaler_path}")
-    
-    # Save brand ratings
+    # Save standard artifacts
+    joblib.dump(X_train.columns.tolist(), os.path.join(model_dir, "feature_columns.joblib"))
+    joblib.dump(scaler, os.path.join(model_dir, "scaler.joblib"))
     if brand_ratings:
-        brand_ratings_path = os.path.join(model_dir, "brand_ratings.joblib")
-        joblib.dump(brand_ratings, brand_ratings_path)
-        print(f"Brand ratings saved to {brand_ratings_path}")
+        joblib.dump(brand_ratings, os.path.join(model_dir, "brand_ratings.joblib"))
     
-    print(f"\nOverall winner: Tuned {best_name}")
-    print(f"Final best model saved to {model_save_path}")
-    print(f"Feature columns saved to {feature_cols_path}")
+    print(f"\n WINNER: {best_overall_name}")
+    print(f"Final Model saved to: {model_save_path}")
 
 if __name__ == "__main__":
     main()
