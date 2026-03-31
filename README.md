@@ -17,8 +17,7 @@ The model uses a multi-stage feature engineering pipeline:
 
 ## Project Structure
 *   **`src/feature_engineering.py`**: Robust data cleaning and artifact generation.
-*   **`src/hyperparameter_tuning.py`**: The search engine for optimal model parameters.
-*   **`src/model_training.py`**: The complete production pipeline (Baselines → Tuning → Ensemble).
+*   **`src/model_training.py`**: The master script. Handles baseline evaluation, hyperparameter tuning, and ensemble building.
 *   **`src/predict.py`**: Command-line inference script for new laptop specs.
 *   **`notebooks/data_cleaning.ipynb`**: Combines laptopData.csv and laptopSpecs.csv and cleans data.
 *   **`notebooks/eda.ipynb`**: Detailed visual exploration and data analysis.
@@ -34,7 +33,7 @@ pip install -r requirements.txt
 
 ### 2. Training the Full Ensemble
 ```bash
-python src/hyperparameter_tuning.py
+python src/model_training.py
 ```
 This script will evaluate baselines, search for the best hyperparameters, build the final ensemble, and save the winner to `models/best_laptop_price_model_final.joblib`.
 

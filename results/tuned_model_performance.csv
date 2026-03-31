@@ -1,0 +1,8 @@
+Model,R2 Score,Adj R2,MAE (Price),Best Params,Duration (s)
+Tuned Random Forest,0.9014756367550912,0.8785185035718115,8921.08241911059,"{'n_estimators': 500, 'max_features': 'log2', 'max_depth': None}",10.47150707244873
+Tuned Gradient Boosting,0.9107233011626826,0.8899209635695213,8713.066166696168,"{'subsample': 0.8, 'n_estimators': 500, 'max_depth': 3, 'learning_rate': 0.05}",6.461403131484985
+Tuned XGBoost,0.9120903629436118,0.8916065640178514,8499.382737922793,"{'subsample': 0.7, 'n_estimators': 300, 'max_depth': 4, 'learning_rate': 0.05}",4.213957786560059
+Tuned CatBoost,0.9146508540101592,0.894763674362041,8748.4781807187,"{'learning_rate': 0.05, 'l2_leaf_reg': 3, 'iterations': 1000, 'depth': 8}",20.295426845550537
+Tuned Extra Trees,0.8892693446907489,0.8634680269487875,9446.004098957883,"{'n_estimators': 300, 'min_samples_split': 5, 'max_depth': None}",9.753912925720215
+Tuned SVR,0.88840789110434,0.8624058463131183,9559.822229574584,"{'gamma': 0.01, 'epsilon': 0.1, 'C': 10}",1.1824288368225098
+Tuned Stacked Generalizer (Ensemble),0.9189513807171857,0.9000662655444911,8392.263908910098,Ensemble of tuned models,2.7684638500213623
