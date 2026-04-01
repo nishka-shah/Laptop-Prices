@@ -22,11 +22,25 @@ from sklearn.svm import SVR
 from sklearn.neighbors import KNeighborsRegressor
 from xgboost import XGBRegressor
 from catboost import CatBoostRegressor
-from sklearn.metrics import r2_score, mean_absolute_error, mean_squared_error
+from sklearn.metrics import r2_score, mean_absolute_error, mean_squared_error, mean_absolute_percentage_error
 from sklearn.inspection import permutation_importance
 
 # Visual settings
 sns.set_theme(style="whitegrid")
+
+def calculate_price_metrics(y_true_log, y_pred_log):
+    """Calculate evaluation metrics on the back-transformed price scale."""
+    y_true = np.exp(y_true_log)
+    y_pred = np.exp(y_pred_log)
+    
+    mse = mean_squared_error(y_true, y_pred)
+    return {
+        "R2 Score": r2_score(y_true_log, y_pred_log),
+        "MAE (Price)": mean_absolute_error(y_true, y_pred),
+        "MSE (Price)": mse,
+        "RMSE (Price)": np.sqrt(mse),
+        "MAPE": mean_absolute_percentage_error(y_true, y_pred)
+    }
 
 def tune_models(X_train, y_train, X_test, y_test):
     """Tune the top models using RandomizedSearchCV and return the best estimators."""
@@ -64,12 +78,14 @@ def tune_models(X_train, y_train, X_test, y_test):
         best_model = search.best_estimator_
         y_pred = best_model.predict(X_test)
         
-        r2 = r2_score(y_test, y_pred)
-        mae_price = mean_absolute_error(np.exp(y_test), np.exp(y_pred))
-        
+        metrics = calculate_price_metrics(y_test, y_pred)
         best_models[name] = best_model
-        results.append({"Model": f"Tuned {name}", "R2 Score": r2, "MAE (Price)": mae_price, "Duration (s)": duration})
-        print(f"Done in {duration:.2f}s. R2: {r2:.4f}")
+        
+        res = {"Model": f"Tuned {name}", "Duration (s)": duration}
+        res.update(metrics)
+        results.append(res)
+        
+        print(f"Done in {duration:.2f}s. R2: {metrics['R2 Score']:.4f}")
         print(f"Optimal Parameters: {search.best_params_}")
 
     # Build Final Tuned Stacked Generalizer (Ensemble)
@@ -89,12 +105,13 @@ def tune_models(X_train, y_train, X_test, y_test):
     stack_duration = time() - start_stack
     
     y_pred_stack = final_tuned_stack.predict(X_test)
-    r2_stack = r2_score(y_test, y_pred_stack)
-    mae_price_stack = mean_absolute_error(np.exp(y_test), np.exp(y_pred_stack))
+    metrics_stack = calculate_price_metrics(y_test, y_pred_stack)
     
     best_models["Stacked Ensemble"] = final_tuned_stack
-    results.append({"Model": "Tuned Stacked Generalizer (Ensemble)", "R2 Score": r2_stack, "MAE (Price)": mae_price_stack, "Duration (s)": stack_duration})
-    print(f"Ensemble trained in {stack_duration:.2f}s. R2: {r2_stack:.4f}")
+    res_stack = {"Model": "Tuned Stacked Generalizer (Ensemble)", "Duration (s)": stack_duration}
+    res_stack.update(metrics_stack)
+    results.append(res_stack)
+    print(f"Ensemble trained in {stack_duration:.2f}s. R2: {metrics_stack['R2 Score']:.4f}")
 
     return best_models, pd.DataFrame(results)
 
@@ -106,9 +123,11 @@ def evaluate_simple(models, X_train, X_test, y_train, y_test):
         model.fit(X_train, y_train)
         duration = time() - start_time
         y_pred = model.predict(X_test)
-        r2 = r2_score(y_test, y_pred)
-        mae_price = mean_absolute_error(np.exp(y_test), np.exp(y_pred))
-        results.append({"Model": name, "R2 Score": r2, "MAE (Price)": mae_price, "Time (s)": duration})
+        
+        metrics = calculate_price_metrics(y_test, y_pred)
+        res = {"Model": name, "Time (s)": duration}
+        res.update(metrics)
+        results.append(res)
     return pd.DataFrame(results)
 
 def main():
@@ -158,7 +177,7 @@ def main():
     }
 
     baseline_df = evaluate_simple(baseline_models, X_train, X_test, y_train, y_test)
-    print(baseline_df.sort_values(by="R2 Score", ascending=False)[["Model", "R2 Score", "MAE (Price)"]])
+    print(baseline_df.sort_values(by="R2 Score", ascending=False)[["Model", "R2 Score", "MAE (Price)", "RMSE (Price)", "MAPE"]])
 
     # Hyperparameter Tuning & Tuned Ensemble
     print("\n Phase 2: Hyperparameter Tuning Finalists")
@@ -166,7 +185,7 @@ def main():
     
     print("\n Phase 3: Final Tuned Leaderboard")
     final_ordered = final_df.sort_values(by="R2 Score", ascending=False)
-    print(final_ordered[["Model", "R2 Score", "MAE (Price)"]])
+    print(final_ordered[["Model", "R2 Score", "MAE (Price)", "RMSE (Price)", "MAPE"]])
     
     final_ordered.to_csv(os.path.join(results_dir, "final_tuned_performance.csv"), index=False)
 
@@ -183,7 +202,10 @@ def main():
         joblib.dump(brand_ratings, os.path.join(model_dir, "brand_ratings.joblib"))
     
     print(f"\n WINNER: {best_overall_name}")
-    print(f"R² Score: {final_ordered.iloc[0]['R2 Score']:.4f}")
+    print(f"R² Score    : {final_ordered.iloc[0]['R2 Score']:.4f}")
+    print(f"MAE (Price) : {final_ordered.iloc[0]['MAE (Price)']:.2f}")
+    print(f"RMSE (Price): {final_ordered.iloc[0]['RMSE (Price)']:.2f}")
+    print(f"MAPE        : {final_ordered.iloc[0]['MAPE']:.4%}")
     print(f"Final Model saved to: {model_save_path}")
 
     # Final Plot
