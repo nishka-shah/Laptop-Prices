@@ -70,6 +70,7 @@ def tune_models(X_train, y_train, X_test, y_test):
         best_models[name] = best_model
         results.append({"Model": f"Tuned {name}", "R2 Score": r2, "MAE (Price)": mae_price, "Duration (s)": duration})
         print(f"Done in {duration:.2f}s. R2: {r2:.4f}")
+        print(f"Optimal Parameters: {search.best_params_}")
 
     # Build Final Tuned Stacked Generalizer (Ensemble)
     print("\nBuilding Final Tuned Stacked Generalizer...")
