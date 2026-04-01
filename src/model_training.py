@@ -194,5 +194,37 @@ def main():
     plt.close()
     print(f"Performance plot saved to {report_dir}")
 
+    # Phase 4: Feature Importance Analysis (Dynamic)
+    print("\n Phase 4: Feature Importance Analysis")
+    importance_model = None
+    importance_model_name = ""
+
+    for row in final_ordered.itertuples():
+        m_name = row.Model
+        m_key = "Stacked Ensemble" if "Ensemble" in m_name else m_name.replace("Tuned ", "")
+        m_instance = best_models[m_key]
+
+        if hasattr(m_instance, 'feature_importances_'):
+            importance_model = m_instance
+            importance_model_name = m_name
+            break
+
+    if importance_model:
+        print(f"Generating feature importance plot for: {importance_model_name}")
+        importances = importance_model.feature_importances_
+        feat_imp = pd.Series(importances, index=X_train.columns).sort_values(ascending=False).head(20)
+
+        plt.figure(figsize=(12, 8))
+        sns.barplot(x=feat_imp.values, y=feat_imp.index, palette='mako', hue=feat_imp.index, legend=False)
+        plt.title(f"Top 20 Feature Importances ({importance_model_name})")
+        plt.xlabel("Importance Score")
+        plt.ylabel("Features")
+        plt.tight_layout()
+        plt.savefig(os.path.join(report_dir, "feature_importances.png"))
+        plt.close()
+        print(f"Feature importance plot saved to {report_dir}")
+    else:
+        print("No model with built-in feature importances found in finalists.")
+
 if __name__ == "__main__":
     main()
