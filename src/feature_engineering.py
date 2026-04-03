@@ -1,6 +1,7 @@
 import pandas as pd
 import numpy as np
 import os
+import joblib
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
 
@@ -34,7 +35,7 @@ def extract_cpu_core(cpu):
     elif "ryzen 9" in cpu or "ryzen9" in cpu:
         return "ryzen9"
 
-    # Other AMD families seen in the laptop dataset
+    # Other AMD families
     elif "a4" in cpu:
         return "amd_a4"
     elif "a6" in cpu:
@@ -98,12 +99,12 @@ def group_os(os_name):
 def run_feature_engineering_pipeline(df, brand_ratings=None):
     """
     Modular feature engineering pipeline.
-    Expects a dataframe from 'laptopData.csv' (raw or cleaned).
+    This function processes individual rows and should be safe from leakage.
+    Aggregate features like Brand Ratings should be provided in brand_ratings.
     """
     df = df.copy()
     
     # Screen features 
-    # Extract resolution if missing (needed for inference on raw specs)
     if 'Resolution_X' not in df.columns or 'Resolution_Y' not in df.columns:
         res = df['ScreenResolution'].str.extract(r'(\d+)x(\d+)')
         df['Resolution_X'] = pd.to_numeric(res[0], errors='coerce').fillna(0).astype(int)
@@ -116,7 +117,7 @@ def run_feature_engineering_pipeline(df, brand_ratings=None):
     df['Inches'] = pd.to_numeric(df['Inches'], errors='coerce')
     df['PPI'] = (((df['Resolution_X']**2) + (df['Resolution_Y']**2))**0.5 / df['Inches'].replace(0, np.nan)).fillna(0).astype('float')
 
-    # Clean Ram and Weight if they are strings
+    # Clean Ram and Weight
     if df['Ram'].dtype == 'O':
         df['Ram'] = df['Ram'].str.replace('GB', '', regex=False)
         df['Ram'] = pd.to_numeric(df['Ram'], errors='coerce').fillna(8).astype(int)
@@ -124,17 +125,15 @@ def run_feature_engineering_pipeline(df, brand_ratings=None):
         df['Weight'] = df['Weight'].str.replace('kg', '', regex=False)
         df['Weight'] = pd.to_numeric(df['Weight'], errors='coerce').fillna(2.0).astype(float)
     
-    # Storage extraction (SSD, HDD) from Memory string if columns are missing
+    # Storage extraction
     if 'SSD' not in df.columns or 'HDD' not in df.columns:
-        df['Memory'] = df['Memory'].astype(str).str.replace(r'\.0', '', regex=True)
-        df["Memory"] = df["Memory"].str.replace('GB', '')
-        df["Memory"] = df["Memory"].str.replace('TB', '000')
+        memory = df['Memory'].astype(str).str.replace(r'\.0', '', regex=True)
+        memory = memory.str.replace('GB', '').str.replace('TB', '000')
         
-        storage_info = df["Memory"].str.split("+", n=1, expand=True)
+        storage_info = memory.str.split("+", n=1, expand=True)
         df['first'] = storage_info[0].str.strip()
         df["Layer1HDD"] = df["first"].apply(lambda x: 1 if "HDD" in x else 0)
         df["Layer1SSD"] = df["first"].apply(lambda x: 1 if "SSD" in x else 0)
-        
         df['first'] = df['first'].str.extract(r'(\d+)').fillna(0).astype(int)
         
         if storage_info.shape[1] > 1:
@@ -144,21 +143,17 @@ def run_feature_engineering_pipeline(df, brand_ratings=None):
             
         df["Layer2HDD"] = df["second"].apply(lambda x: 1 if "HDD" in x else 0)
         df["Layer2SSD"] = df["second"].apply(lambda x: 1 if "SSD" in x else 0)
-        
         df['second'] = df['second'].str.extract(r'(\d+)').fillna(0).astype(int)
         
         df["HDD"] = (df["first"] * df["Layer1HDD"] + df["second"] * df["Layer2HDD"])
         df["SSD"] = (df["first"] * df["Layer1SSD"] + df["second"] * df["Layer2SSD"])
-        df.drop(columns=['first', 'second', 'Layer1HDD', 'Layer1SSD', 'Layer2HDD', 'Layer2SSD'], inplace=True)
+        df.drop(columns=['first', 'second', 'Layer1HDD', 'Layer1SSD', 'Layer2HDD', 'Layer2SSD'], inplace=True, errors='ignore')
 
     # Hardware components
     df['CPU_Tier'] = df['Cpu'].apply(get_cpu_tier)
     df['Is_Discrete_GPU'] = df['Gpu'].apply(get_gpu_type)
-    
-    # Logic for Has_SSD (Binary indicator)
     df['Has_SSD'] = (df['SSD'] > 0).astype(int)
 
-    # 3. Hardware details extraction if missing
     if 'CPU_speed' not in df.columns:
         df['CPU_speed'] = df['Cpu'].astype(str).str.extract(r'(\d+\.?\d*)GHz').astype(float).fillna(2.0)
     if 'CPU_core' not in df.columns:
@@ -166,85 +161,92 @@ def run_feature_engineering_pipeline(df, brand_ratings=None):
     if 'GPU_brand' not in df.columns:
         df['GPU_brand'] = df['Gpu'].apply(extract_gpu_brand)
 
-    # Performance Score and Brand Ratings
+    # Performance Score
     df['Performance_Score'] = (df['CPU_Tier'] * df['CPU_speed']) + (df['Ram'] * 0.5) + (df['Is_Discrete_GPU'] * 2)
     
+    # Brand Ratings (Corrected to default to global average if missing)
+    avg_rating = 0.0
     if brand_ratings:
         df['avg_brand_spec_rating'] = df['Company'].astype(str).str.lower().str.strip().map(brand_ratings)
-        # Fill missing brand ratings with global average (e.g. ~68)
-        df['avg_brand_spec_rating'] = df['avg_brand_spec_rating'].fillna(68.0)
+        # Use mean of provided ratings as default for unknown brands
+        avg_rating = np.mean(list(brand_ratings.values())) if brand_ratings else 68.0
+        df['avg_brand_spec_rating'] = df['avg_brand_spec_rating'].fillna(avg_rating)
     else:
-        # If no ratings provided, use placeholder
         df['avg_brand_spec_rating'] = 68.0
 
     if 'Price' in df.columns:
         df['Log_Price'] = np.log(df['Price'])
 
-    # Handle Categorical grouping
-    # Rare Label Encoding for Company
-    company_counts = df['Company'].value_counts()
-    rare_companies = company_counts[company_counts < 10].index
-    df['Company'] = df['Company'].apply(lambda x: 'Other' if x in rare_companies else x)
-    
     # OS Grouping
     df['OS_Category'] = df['OpSys'].apply(group_os)
     
-    # One-Hot Encoding
+    # Standardize casing
     categorical_cols = ['Company', 'TypeName', 'OS_Category', 'CPU_core', 'GPU_brand']
-    
-    # Standardize casing for categorical columns to prevent casing errors during inference
     for col in categorical_cols:
         if col in df.columns:
             df[col] = df[col].astype(str).str.lower().str.strip()
 
-    df_engineered = pd.get_dummies(df, columns=categorical_cols, drop_first=True, dtype=int)
-    
-    # Drop redundant columns
-    # We keep SSD and HDD as they are original features
-    cols_to_drop = [
-        'ScreenResolution', 'Cpu', 'Memory', 'Gpu', 'OpSys', 'Price', 
-        'Resolution_X', 'Resolution_Y', 'Pixel_Count', 'Company_match', 'Unnamed: 0'
-    ]
-    df_final = df_engineered.drop(columns=[c for c in cols_to_drop if c in df_engineered.columns])
-    
-    # Final cleanup: Drop rows with NaNs (ex. from Inches coercion)
-    df_final = df_final.dropna()
-    
-    return df_final
+    return df
 
 def prepare_datasets(df, target='Log_Price', test_size=0.2, random_state=42):
-    """Splits data and scales numerical features."""
-    X = df.drop(columns=[target])
-    y = df[target]
+    """
+    Splits data, handles categorical encoding and scaling with NO LEAKAGE.
+    """
+    # Define categorical and numerical columns
+    categorical_cols = ['Company', 'TypeName', 'OS_Category', 'CPU_core', 'GPU_brand']
     
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=test_size, random_state=random_state)
+    # Split raw-ish dataframe
+    train_df, test_df = train_test_split(df, test_size=test_size, random_state=random_state)
     
-    # Identify numerical columns for scaling and ensure float dtype
-    numeric_cols = X_train.select_dtypes(include=['int64', 'float64']).columns
-    X_train.loc[:, numeric_cols] = X_train[numeric_cols].astype(float)
-    X_test.loc[:, numeric_cols] = X_test[numeric_cols].astype(float)
+    # Calculate Brand Ratings based ON TRAINING DATA only
+    # We use Performance_Score as a proxy for brand quality if Price is not the target
+    # But usually, brand reputation relates to price.
+    # Note: If target is Log_Price, we use Price or Log_Price for the training set averages.
+    
+    # Extract brand ratings from training set prices
+    if target in train_df.columns:
+        brand_stats = train_df.groupby('Company')[target].mean().to_dict()
+        # Update df's avg_brand_spec_rating with these training-derived values
+        def map_brand(c):
+            return brand_stats.get(str(c).lower().strip(), np.mean(list(brand_stats.values())))
+        
+        train_df['avg_brand_spec_rating'] = train_df['Company'].apply(map_brand)
+        test_df['avg_brand_spec_rating'] = test_df['Company'].apply(map_brand)
+    
+    # Drop rows with NaNs
+    train_df = train_df.dropna()
+    test_df = test_df.dropna()
 
-    scaler = StandardScaler()
+    # One-Hot Encoding
+    # Use get_dummies on Train first to get columns, then align Test
+    X_train_raw = train_df.drop(columns=[target, 'Price', 'Log_Price'], errors='ignore')
+    y_train = train_df[target]
     
-    X_train.loc[:, numeric_cols] = scaler.fit_transform(X_train[numeric_cols])
-    X_test.loc[:, numeric_cols] = scaler.transform(X_test[numeric_cols])
+    X_test_raw = test_df.drop(columns=[target, 'Price', 'Log_Price'], errors='ignore')
+    y_test = test_df[target]
+
+    X_train = pd.get_dummies(X_train_raw, columns=categorical_cols, drop_first=True, dtype=int)
+    X_test = pd.get_dummies(X_test_raw, columns=categorical_cols, drop_first=True, dtype=int)
+    
+    # Align columns
+    X_test = X_test.reindex(columns=X_train.columns, fill_value=0)
+    
+    # Drop non-numeric leftovers
+    cols_to_drop = ['ScreenResolution', 'Cpu', 'Memory', 'Gpu', 'OpSys', 'Unnamed: 0']
+    X_train = X_train.drop(columns=[c for c in cols_to_drop if c in X_train.columns])
+    X_test = X_test.drop(columns=[c for c in cols_to_drop if c in X_test.columns])
+
+    # Scaling
+    numeric_cols = X_train.select_dtypes(include=['int64', 'float64']).columns
+    scaler = StandardScaler()
+    X_train[numeric_cols] = scaler.fit_transform(X_train[numeric_cols])
+    X_test[numeric_cols] = scaler.transform(X_test[numeric_cols])
     
     return X_train, X_test, y_train, y_test, scaler
 
 if __name__ == "__main__":
-    # Example usage
-    data_path = os.path.join(os.path.dirname(__file__), "../data/cleaned_laptop_data.csv")
-    print(f"Loading data from {data_path}...")
-    
-    try:
-        df_raw = load_data(data_path)
-        df_features = run_feature_engineering_pipeline(df_raw)
-        X_train, X_test, y_train, y_test, scaler = prepare_datasets(df_features)
-        
-        print("Pipeline Execution Successful!")
-        print(f"Engineered Features Shape: {df_features.shape}")
-        print(f"Training Set Shape: {X_train.shape}")
-        print(f"Target variable statistics:\n{y_train.describe()}")
-        
-    except Exception as e:
-        print(f"Error in pipeline: {e}")
+    data_path = os.path.join(os.path.dirname(__file__), "../data/laptopData.csv")
+    df_raw = load_data(data_path)
+    df_intermediate = run_feature_engineering_pipeline(df_raw)
+    X_train, X_test, y_train, y_test, scaler = prepare_datasets(df_intermediate)
+    print(f"Train shape: {X_train.shape}, Test shape: {X_test.shape}")

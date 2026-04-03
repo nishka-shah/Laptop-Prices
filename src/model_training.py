@@ -14,7 +14,7 @@ if PROJ_ROOT not in sys.path:
 
 from src.feature_engineering import load_data, run_feature_engineering_pipeline, prepare_datasets
 
-# Import all modeling requirements directly since we are consolidating
+# Import all modeling requirements
 from sklearn.model_selection import RandomizedSearchCV
 from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor, ExtraTreesRegressor, StackingRegressor
 from sklearn.linear_model import LinearRegression, Ridge, Lasso, RidgeCV
@@ -43,9 +43,7 @@ def calculate_price_metrics(y_true_log, y_pred_log):
     }
 
 def tune_models(X_train, y_train, X_test, y_test):
-    """Tune the top models using RandomizedSearchCV and return the best estimators."""
-    
-    # Parameter Grids matching the high-performance notebook
+    """Tune the top models using RandomizedSearchCV."""
     rf_grid = {'n_estimators': [100, 300, 500], 'max_depth': [10, 20, None], 'max_features': ['sqrt', 'log2', None]}
     gb_grid = {'n_estimators': [100, 300, 500], 'learning_rate': [0.01, 0.05, 0.1], 'max_depth': [3, 4, 5, 6], 'subsample': [0.8, 0.9, 1.0]}
     xgb_grid = {'n_estimators': [100, 300, 500, 1000], 'learning_rate': [0.01, 0.05, 0.1], 'max_depth': [4, 6, 8, 10], 'subsample': [0.7, 0.8, 1.0]}
@@ -66,7 +64,7 @@ def tune_models(X_train, y_train, X_test, y_test):
     results = []
 
     for estimator, param_dist, name in models_to_tune:
-        print(f"\nTuning {name}...")
+        print(f"Tuning {name}...")
         start = time()
         search = RandomizedSearchCV(
             estimator=estimator, param_distributions=param_dist,
@@ -85,8 +83,7 @@ def tune_models(X_train, y_train, X_test, y_test):
         res.update(metrics)
         results.append(res)
         
-        print(f"Done in {duration:.2f}s. R2: {metrics['R2 Score']:.4f}")
-        print(f"Optimal Parameters: {search.best_params_}")
+        print(f"Done. R2: {metrics['R2 Score']:.4f}")
 
     # Build Final Tuned Stacked Generalizer (Ensemble)
     print("\nBuilding Final Tuned Stacked Generalizer...")
@@ -100,18 +97,14 @@ def tune_models(X_train, y_train, X_test, y_test):
         final_estimator=RidgeCV(), cv=5, n_jobs=-1
     )
     
-    start_stack = time()
     final_tuned_stack.fit(X_train, y_train)
-    stack_duration = time() - start_stack
-    
     y_pred_stack = final_tuned_stack.predict(X_test)
     metrics_stack = calculate_price_metrics(y_test, y_pred_stack)
     
     best_models["Stacked Ensemble"] = final_tuned_stack
-    res_stack = {"Model": "Tuned Stacked Generalizer (Ensemble)", "Duration (s)": stack_duration}
+    res_stack = {"Model": "Tuned Stacked Generalizer (Ensemble)", "Duration (s)": 0}
     res_stack.update(metrics_stack)
     results.append(res_stack)
-    print(f"Ensemble trained in {stack_duration:.2f}s. R2: {metrics_stack['R2 Score']:.4f}")
 
     return best_models, pd.DataFrame(results)
 
@@ -132,7 +125,6 @@ def evaluate_simple(models, X_train, X_test, y_train, y_test):
 
 def main():
     data_path = os.path.join(PROJ_ROOT, "data", "laptopData.csv")
-    spec_path = os.path.join(PROJ_ROOT, "data", "specData.csv")
     report_dir = os.path.join(PROJ_ROOT, "reports")
     results_dir = os.path.join(PROJ_ROOT, "results")
     model_dir = os.path.join(PROJ_ROOT, "models")
@@ -141,26 +133,17 @@ def main():
     os.makedirs(results_dir, exist_ok=True)
     os.makedirs(model_dir, exist_ok=True)
 
-    if not os.path.exists(data_path):
-        print(f"Error: Data file not found at {data_path}")
-        return
-
-    # Brand Ratings calculation
-    brand_ratings = None
-    if os.path.exists(spec_path):
-        print("Calculating brand ratings from spec data...")
-        spec_df = pd.read_csv(spec_path)
-        spec_df['spec_rating'] = pd.to_numeric(spec_df['spec_rating'], errors='coerce')
-        spec_df['brand_match'] = spec_df['brand'].astype(str).str.lower().str.strip()
-        brand_ratings = spec_df.groupby('brand_match')['spec_rating'].mean().to_dict()
-
-    print("Loading and preprocessing data...")
+    print("Loading and preprocessing data (NO LEAKAGE split)...")
     df_raw = load_data(data_path)
-    df_features = run_feature_engineering_pipeline(df_raw, brand_ratings=brand_ratings).dropna()
-    X_train, X_test, y_train, y_test, scaler = prepare_datasets(df_features)
+    
+    # Run spec-based feature engineering (Internal row-level features)
+    df_intermediate = run_feature_engineering_pipeline(df_raw)
+    
+    # Split and Encode (Handles Brand Ratings via Training Mean Price)
+    X_train, X_test, y_train, y_test, scaler = prepare_datasets(df_intermediate)
 
     # Baseline Training
-    print("\n Phase 1: Baseline Comparison")
+    print("\nPhase 1: Baseline Comparison")
     baseline_models = {
         "Linear Regression": LinearRegression(),
         "Ridge": Ridge(alpha=1.0),
@@ -169,87 +152,38 @@ def main():
         "Extra Trees": ExtraTreesRegressor(n_estimators=100, random_state=42),
         "SVR": SVR(kernel='rbf'),
         "XGBoost": XGBRegressor(n_estimators=100, random_state=42),
-        "CatBoost": CatBoostRegressor(n_estimators=100, verbose=0, random_state=42),
-        "Stacked Generalizer (Baseline)": StackingRegressor(
-            estimators=[('xgb', XGBRegressor(n_estimators=100, random_state=42)), ('cat', CatBoostRegressor(n_estimators=100, verbose=0, random_state=42)), ('et', ExtraTreesRegressor(n_estimators=100, random_state=42)), ('svr', SVR(kernel='rbf', C=10))],
-            final_estimator=RidgeCV(), cv=5, n_jobs=-1
-        )
+        "CatBoost": CatBoostRegressor(n_estimators=100, verbose=0, random_state=42)
     }
 
     baseline_df = evaluate_simple(baseline_models, X_train, X_test, y_train, y_test)
-    print(baseline_df.sort_values(by="R2 Score", ascending=False)[["Model", "R2 Score", "MAE (Price)", "RMSE (Price)", "MAPE"]])
+    print(baseline_df.sort_values(by="R2 Score", ascending=False)[["Model", "R2 Score", "MAE (Price)"]])
 
-    # Hyperparameter Tuning & Tuned Ensemble
-    print("\n Phase 2: Hyperparameter Tuning Finalists")
+    # Hyperparameter Tuning
+    print("\nPhase 2: Hyperparameter Tuning")
     best_models, final_df = tune_models(X_train, y_train, X_test, y_test)
     
-    print("\n Phase 3: Final Tuned Leaderboard")
     final_ordered = final_df.sort_values(by="R2 Score", ascending=False)
     print(final_ordered[["Model", "R2 Score", "MAE (Price)", "RMSE (Price)", "MAPE"]])
-    
     final_ordered.to_csv(os.path.join(results_dir, "final_tuned_performance.csv"), index=False)
 
-    # Save Production Winner
+    # Save Winner
     best_overall_name = final_ordered.iloc[0]["Model"]
     model_key = "Stacked Ensemble" if "Ensemble" in best_overall_name else best_overall_name.replace("Tuned ", "")
     best_model = best_models[model_key]
 
-    model_save_path = os.path.join(model_dir, "best_laptop_price_model_final.joblib")
-    joblib.dump(best_model, model_save_path)
+    joblib.dump(best_model, os.path.join(model_dir, "best_laptop_price_model_final.joblib"))
     joblib.dump(scaler, os.path.join(model_dir, "scaler.joblib"))
     joblib.dump(X_train.columns.tolist(), os.path.join(model_dir, "feature_columns.joblib"))
-    if brand_ratings:
-        joblib.dump(brand_ratings, os.path.join(model_dir, "brand_ratings.joblib"))
     
-    print(f"\n WINNER: {best_overall_name}")
-    print(f"R² Score    : {final_ordered.iloc[0]['R2 Score']:.4f}")
-    print(f"MAE (Price) : {final_ordered.iloc[0]['MAE (Price)']:.2f}")
-    print(f"RMSE (Price): {final_ordered.iloc[0]['RMSE (Price)']:.2f}")
-    print(f"MAPE        : {final_ordered.iloc[0]['MAPE']:.4%}")
-    print(f"Final Model saved to: {model_save_path}")
+    # Recalculate brand ratings from training set for saving into production artifacts
+    brand_stats = pd.concat([X_train_orig_company_info(df_intermediate, X_train.index), y_train], axis=1).groupby('Company')['Log_Price'].mean().to_dict()
+    joblib.dump(brand_stats, os.path.join(model_dir, "brand_ratings.joblib"))
 
-    # Final Plot
-    y_pred = best_model.predict(X_test)
-    plt.figure(figsize=(10, 6))
-    plt.scatter(y_test, y_pred, alpha=0.5, color='darkviolet')
-    plt.plot([y_test.min(), y_test.max()], [y_test.min(), y_test.max()], 'r--', lw=2)
-    plt.title(f"Production Model Fit: {best_overall_name}")
-    plt.savefig(os.path.join(report_dir, "production_model_fit.png"))
-    plt.close()
-    print(f"Performance plot saved to {report_dir}")
+    print(f"\nWINNER: {best_overall_name} saved to models/")
 
-    # Feature Importance Analysis (Absolute Winner)
-    print("\n Phase 4: Feature Importance Analysis")
-    best_overall_name = final_ordered.iloc[0]["Model"]
-    model_key = "Stacked Ensemble" if "Ensemble" in best_overall_name else best_overall_name.replace("Tuned ", "")
-    best_model_instance = best_models[model_key]
-
-    print(f"Analyzing importance for the leaderboard winner: {best_overall_name}")
-
-    if hasattr(best_model_instance, 'feature_importances_'):
-        print(f"Using built-in feature importances for {best_overall_name}...")
-        importances = best_model_instance.feature_importances_
-        method = "Built-in"
-    else:
-        print(f"Calculating Permutation Importance for {best_overall_name} (this may take a moment)...")
-        r = permutation_importance(best_model_instance, X_test, y_test,
-                                  n_repeats=10,
-                                  random_state=42,
-                                  n_jobs=-1)
-        importances = r.importances_mean
-        method = "Permutation"
-
-    feat_imp = pd.Series(importances, index=X_train.columns).sort_values(ascending=False).head(20)
-
-    plt.figure(figsize=(12, 8))
-    sns.barplot(x=feat_imp.values, y=feat_imp.index, palette='mako', hue=feat_imp.index, legend=False)
-    plt.title(f"Top 20 Feature Importances ({best_overall_name}) - {method} Method")
-    plt.xlabel("Importance Score")
-    plt.ylabel("Features")
-    plt.tight_layout()
-    plt.savefig(os.path.join(report_dir, "feature_importances.png"))
-    plt.close()
-    print(f"Feature importance plot ({method}) saved to {report_dir}")
+def X_train_orig_company_info(df_orig, train_indices):
+    """Helper to retrieve original company column for final artifact saving."""
+    return df_orig.loc[train_indices, 'Company']
 
 if __name__ == "__main__":
     main()
